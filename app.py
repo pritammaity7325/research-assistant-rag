@@ -6,52 +6,128 @@ from rag.vector_store import VectorStore
 from utils.pdf_loader import load_pdf_text
 from utils.text_splitter import split_text
 
-st.set_page_config(page_title="Research Paper Assistant", layout="wide")
+st.set_page_config(
+    page_title="Research Paper Assistant",
+    layout="wide"
+)
 
 st.title("📚 Research Paper Assistant (RAG + Gemini)")
 
+# Session State
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 if "main_store" not in st.session_state:
     st.session_state.main_store = None
 
-paper_title = st.text_input("Enter paper title")
-
-if st.button("Fetch Paper"):
-    paper, store = process_paper(paper_title)
-    st.session_state.main_store = store
-
-    st.subheader("🔹 Fixed Outputs")
-
-    st.write("**1. Authors:**", ", ".join(paper["authors"]))
-    st.write("**2. Topic:**", paper["title"])
-    st.write("**3. One-liner:**", paper["summary"][:200])
-    st.write("**4. Summary:**", paper["summary"])
-    st.write("**5. Related Papers:**")
-
-    related = fetch_related_papers(paper["title"])
+if "related_stores" not in st.session_state:
     st.session_state.related_stores = {}
 
-    for r in related:
-        st.write("-", r["title"])
-        text = load_pdf_text(r["pdf_url"])
-        chunks = split_text(text)
-        vs = VectorStore()
-        vs.build(chunks)
-        st.session_state.related_stores[r["title"]] = vs
+# Input
+paper_title = st.text_input(
+    "Enter paper title",
+    placeholder="Attention Is All You Need"
+)
 
-question = st.text_input("Ask a follow-up question")
+# Fetch Paper Button
+if st.button("Fetch Paper"):
 
-if st.button("Ask"):
-    st.session_state.chat_history.append(("User", question))
+    if not paper_title.strip():
+        st.warning("Please enter a paper title.")
 
-    if st.session_state.main_store:
-        answer = answer_with_rag(question, st.session_state.main_store, "Main Paper")
     else:
-        answer = "Please load a paper first."
+        try:
+            with st.spinner("Fetching and processing paper..."):
 
-    st.session_state.chat_history.append(("Assistant", answer))
+                paper, store = process_paper(paper_title)
+
+                st.session_state.main_store = store
+
+                st.subheader("🔹 Fixed Outputs")
+
+                st.write("**1. Authors:**", ", ".join(paper["authors"]))
+                st.write("**2. Topic:**", paper["title"])
+                st.write("**3. One-liner:**", paper["summary"][:200])
+                st.write("**4. Summary:**", paper["summary"])
+
+                st.write("**5. Related Papers:**")
+
+                # Fetch Related Papers Safely
+                try:
+                    related = fetch_related_papers(paper["title"])
+
+                    st.session_state.related_stores = {}
+
+                    if related:
+
+                        for r in related:
+
+                            st.write("-", r["title"])
+
+                            try:
+                                text = load_pdf_text(r["pdf_url"])
+
+                                if text:
+
+                                    chunks = split_text(text)
+
+                                    vs = VectorStore()
+                                    vs.build(chunks)
+
+                                    st.session_state.related_stores[r["title"]] = vs
+
+                            except Exception as pdf_error:
+                                st.warning(
+                                    f"Could not process PDF: {r['title']}"
+                                )
+                                print(pdf_error)
+
+                    else:
+                        st.warning("No related papers found.")
+
+                except Exception as arxiv_error:
+                    st.error("Failed to fetch related papers from arXiv.")
+                    print(arxiv_error)
+
+        except Exception as e:
+            st.error("Error processing paper.")
+            print(e)
+
+# Question Input
+question = st.text_input(
+    "Ask a follow-up question",
+    placeholder="What is the main contribution of this paper?"
+)
+
+# Ask Button
+if st.button("Ask"):
+
+    if not question.strip():
+        st.warning("Please enter a question.")
+
+    else:
+        st.session_state.chat_history.append(("User", question))
+
+        try:
+            if st.session_state.main_store:
+
+                answer = answer_with_rag(
+                    question,
+                    st.session_state.main_store,
+                    "Main Paper"
+                )
+
+            else:
+                answer = "Please load a paper first."
+
+        except Exception as e:
+            answer = "Error generating answer."
+            print(e)
+
+        st.session_state.chat_history.append(("Assistant", answer))
+
+# Chat Display
+st.subheader("💬 Chat History")
 
 for role, msg in st.session_state.chat_history:
     st.write(f"**{role}:** {msg}")
