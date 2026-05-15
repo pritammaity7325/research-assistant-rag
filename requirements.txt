@@ -1,0 +1,7 @@
+streamlit
+arxiv
+google-genai
+faiss-cpu
+sentence-transformers
+pypdf
+numpy
