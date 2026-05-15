@@ -2,9 +2,6 @@ import streamlit as st
 from pipelines.paper_pipeline import process_paper
 from pipelines.query_pipeline import answer_with_rag
 from services.arxiv_service import fetch_related_papers
-from rag.vector_store import VectorStore
-from utils.pdf_loader import load_pdf_text
-from utils.text_splitter import split_text
 
 st.set_page_config(
     page_title="Research Paper Assistant",
@@ -20,8 +17,8 @@ if "chat_history" not in st.session_state:
 if "main_store" not in st.session_state:
     st.session_state.main_store = None
 
-if "related_stores" not in st.session_state:
-    st.session_state.related_stores = {}
+if "paper_loaded" not in st.session_state:
+    st.session_state.paper_loaded = False
 
 # Input
 paper_title = st.text_input(
@@ -39,55 +36,75 @@ if st.button("Fetch Paper"):
         try:
             with st.spinner("Fetching and processing paper..."):
 
-                paper, store = process_paper(paper_title)
+                result = process_paper(paper_title)
 
-                st.session_state.main_store = store
+                if result is None:
+                    st.error("Could not fetch paper from arXiv.")
 
-                st.subheader("🔹 Fixed Outputs")
+                else:
+                    paper, store = result
 
-                st.write("**1. Authors:**", ", ".join(paper["authors"]))
-                st.write("**2. Topic:**", paper["title"])
-                st.write("**3. One-liner:**", paper["summary"][:200])
-                st.write("**4. Summary:**", paper["summary"])
+                    st.session_state.main_store = store
+                    st.session_state.paper_loaded = True
 
-                st.write("**5. Related Papers:**")
+                    st.subheader("🔹 Paper Information")
 
-                # Fetch Related Papers Safely
-                try:
-                    related = fetch_related_papers(paper["title"])
+                    st.write(
+                        "**1. Authors:**",
+                        ", ".join(paper["authors"])
+                    )
 
-                    st.session_state.related_stores = {}
+                    st.write(
+                        "**2. Topic:**",
+                        paper["title"]
+                    )
 
-                    if related:
+                    st.write(
+                        "**3. One-liner:**",
+                        paper["summary"][:200]
+                    )
 
-                        for r in related:
+                    st.write(
+                        "**4. Summary:**",
+                        paper["summary"]
+                    )
 
-                            st.write("-", r["title"])
+                    # Related Papers
+                    st.subheader("📄 Related Papers")
 
-                            try:
-                                text = load_pdf_text(r["pdf_url"])
+                    try:
+                        related = fetch_related_papers(
+                            paper["title"]
+                        )
 
-                                if text:
+                        if related:
 
-                                    chunks = split_text(text)
+                            for idx, r in enumerate(related, start=1):
 
-                                    vs = VectorStore()
-                                    vs.build(chunks)
-
-                                    st.session_state.related_stores[r["title"]] = vs
-
-                            except Exception as pdf_error:
-                                st.warning(
-                                    f"Could not process PDF: {r['title']}"
+                                st.markdown(
+                                    f"**{idx}. {r['title']}**"
                                 )
-                                print(pdf_error)
 
-                    else:
-                        st.warning("No related papers found.")
+                                st.write(
+                                    r["summary"][:250] + "..."
+                                )
 
-                except Exception as arxiv_error:
-                    st.error("Failed to fetch related papers from arXiv.")
-                    print(arxiv_error)
+                                st.markdown(
+                                    f"[Open PDF]({r['pdf_url']})"
+                                )
+
+                                st.divider()
+
+                        else:
+                            st.warning(
+                                "No related papers found."
+                            )
+
+                    except Exception as arxiv_error:
+                        st.error(
+                            "Failed to fetch related papers from arXiv."
+                        )
+                        print(arxiv_error)
 
         except Exception as e:
             st.error("Error processing paper.")
@@ -105,29 +122,38 @@ if st.button("Ask"):
     if not question.strip():
         st.warning("Please enter a question.")
 
+    elif not st.session_state.paper_loaded:
+        st.warning("Please fetch a paper first.")
+
     else:
-        st.session_state.chat_history.append(("User", question))
+        st.session_state.chat_history.append(
+            ("User", question)
+        )
 
         try:
-            if st.session_state.main_store:
-
-                answer = answer_with_rag(
-                    question,
-                    st.session_state.main_store,
-                    "Main Paper"
-                )
-
-            else:
-                answer = "Please load a paper first."
+            answer = answer_with_rag(
+                question,
+                st.session_state.main_store,
+                "Main Paper"
+            )
 
         except Exception as e:
             answer = "Error generating answer."
             print(e)
 
-        st.session_state.chat_history.append(("Assistant", answer))
+        st.session_state.chat_history.append(
+            ("Assistant", answer)
+        )
 
 # Chat Display
-st.subheader("💬 Chat History")
+if st.session_state.chat_history:
 
-for role, msg in st.session_state.chat_history:
-    st.write(f"**{role}:** {msg}")
+    st.subheader("💬 Chat History")
+
+    for role, msg in st.session_state.chat_history:
+
+        if role == "User":
+            st.markdown(f"🧑 **User:** {msg}")
+
+        else:
+            st.markdown(f"🤖 **Assistant:** {msg}")
